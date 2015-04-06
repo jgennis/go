@@ -51,6 +51,8 @@ Slice	runtime·allgs;
 uintptr runtime·allglen;
 ForceGCState	runtime·forcegc;
 
+static int32 trace_marker_fd = -1;
+
 void runtime·mstart(void);
 static void runqput(P*, G*);
 static G* runqget(P*);
@@ -110,6 +112,11 @@ void (*_cgo_free)(void);
 void* runtime·cgoMalloc;
 void* runtime·cgoFree;
 
+static void tminit(void)
+{
+	trace_marker_fd = runtime·open("/sys/kernel/debug/tracing/trace_marker", 1 /* O_WRONLY */, 0);
+}
+
 // The bootstrap sequence is:
 //
 //	call osinit
@@ -123,6 +130,8 @@ runtime·schedinit(void)
 {
 	int32 n, procs;
 	byte *p;
+
+	tminit();
 
 	// raceinit must be the first call to race detector.
 	// In particular, it must be done before mallocinit below calls racemapshadow.
@@ -1351,13 +1360,15 @@ gcstopm(void)
 	stopm();
 }
 
+static byte buf[128];
+
 // Schedules gp to run on the current M.
 // Never returns.
 static void
 execute(G *gp)
 {
 	int32 hz;
-	
+
 	runtime·casgstatus(gp, Grunnable, Grunning);
 	gp->waitsince = 0;
 	gp->preempt = false;
@@ -1365,6 +1376,17 @@ execute(G *gp)
 	g->m->p->schedtick++;
 	g->m->curg = gp;
 	gp->m = g->m;
+
+	if (trace_marker_fd > 0) {
+		int32 len;
+		runtime·snprintf(buf, sizeof(buf), "B|1234|%p", gp);
+		for (len = 0; len < sizeof(buf); len++) {
+			if (buf[len] == '\0') {
+				break;
+			}
+		}
+		runtime·write(trace_marker_fd, buf, len);
+	}
 
 	// Check whether the profiler needs to be turned on or off.
 	hz = runtime·sched.profilehz;
@@ -1599,6 +1621,10 @@ dropg(void)
 	if(g->m->lockedg == nil) {
 		g->m->curg->m = nil;
 		g->m->curg = nil;
+
+		if (trace_marker_fd > 0) {
+			runtime·write(trace_marker_fd, "E", 1);
+		}
 	}
 }
 

@@ -113,6 +113,10 @@ func Gosched() {
 	mcall(gosched_m)
 }
 
+func G() uintptr {
+	return uintptr(unsafe.Pointer(getg()))
+}
+
 // Puts the current goroutine into a waiting state and calls unlockf.
 // If unlockf returns false, the goroutine is resumed.
 func gopark(unlockf unsafe.Pointer, lock unsafe.Pointer, reason string) {
